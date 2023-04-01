@@ -5,13 +5,19 @@
 
 enum CoolingModes
 {
-  Cooling = 1,
-  Heating = 0
+    Cooling = 1,
+    Heating = 0
 };
 enum ZoneBarrelPosition
 {
-  Open = 1,
-  Closed = 0,
+    Open = 1,
+    Closed = 0
+};
+enum Buttons
+{
+    ModeButton = 5,
+    TempUpButton = 3,
+    TempDownButton = 4
 };
 
 const int DHTPIN = 2;
@@ -19,127 +25,123 @@ const uint8_t DHTTYPE = DHT11;
 DHT dht(DHTPIN, DHTTYPE);
 const int blue = 13;
 const int white = 6;
-const int TEMP_UP_BUTTON_PIN = 3;
-const int TEMP_DOWN_BUTTON_PIN = 4;
-const int MODE_BUTTON_PIN = 5;
+
 LiquidCrystal lcd(7, 8, 9, 10, 11, 12);
+
 int setTempAddress = 0;
-int coolingModeAddress = setTempAddress += sizeof(float);
+int coolingModeAddress = setTempAddress + sizeof(float);
 
 double setTemp = 22;
-
-// Temperature Regulator
 double highRange;
 double lowRange;
-double tempInc = 0.5;
-CoolingModes coolingMode;
-ZoneBarrelPosition barrelPosition = Open;
+const double tempInc = 0.5;
 
 void setup()
 {
-  Serial.begin(9600);
-  pinMode(blue, OUTPUT);
-  pinMode(white, OUTPUT);
-  pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(TEMP_UP_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(TEMP_DOWN_BUTTON_PIN, INPUT_PULLUP);
-  dht.begin();
-  lcd.begin(16, 2);
-  EEPROM.get(coolingModeAddress, coolingMode);
-  coolingMode == Cooling ? coolingMode = Heating : coolingMode = Cooling; // buttonPress bug on start up
-  EEPROM.get(setTempAddress, setTemp);
-  lowRange = setTemp - 1;
-  highRange = setTemp + 1;
+    Serial.begin(9600);
+    pinMode(blue, OUTPUT);
+    pinMode(white, OUTPUT);
+    pinMode(ModeButton, INPUT_PULLUP);
+    pinMode(TempUpButton, INPUT_PULLUP);
+    pinMode(TempDownButton, INPUT_PULLUP);
+    dht.begin();
+    lcd.begin(16, 2);
+    EEPROM.get(coolingModeAddress, coolingMode);
+    EEPROM.get(setTempAddress, setTemp);
+    lowRange = setTemp - 1;
+    highRange = setTemp + 1;
 }
 
-void printToLcd(double t, double setTemp)
+void printToLcd(double t, double setTemp, CoolingModes coolingMode)
 {
-  lcd.setCursor(0, 0);
-  lcd.print("Temp: ");
-  lcd.print(t);
-  lcd.print("c");
-  lcd.setCursor(15, 0);
-  coolingMode == Cooling ? lcd.print("C") : lcd.print("H");
-  lcd.setCursor(0, 1);
-  lcd.print("SetT: ");
-  lcd.print(setTemp);
-  lcd.print("c");
+    lcd.setCursor(0, 0);
+    lcd.print("Temp: ");
+    lcd.print(t);
+    lcd.print("c");
+    lcd.setCursor(15, 0);
+    coolingMode == Cooling ? lcd.print("C") : lcd.print("H");
+    lcd.setCursor(0, 1);
+    lcd.print("SetT: ");
+    lcd.print(setTemp);
+    lcd.print("c");
 }
 
-void changeSetTemp(double tempOffset)
+void changeSetTemp(double tempOffset, int setTempAddress)
 {
-  setTemp += tempOffset;
-  highRange += tempOffset;
-  lowRange += tempOffset;
-  EEPROM.put(setTempAddress, setTemp);
+    setTemp += tempOffset;
+    highRange += tempOffset;
+    lowRange += tempOffset;
+    EEPROM.put(setTempAddress, setTemp);
 }
 
-ZoneBarrelPosition getBarrelPostition(double temp)
+ZoneBarrelPosition getBarrelPosition(double temp, CoolingModes coolingMode)
 {
-  if (!(temp < lowRange) && (temp < lowRange))
-  {
-    return barrelPosition;
-  }
-  if (coolingMode == Cooling)
-  {
-    if (temp > highRange)
-      return Open;
-    if (temp < lowRange)
-      return Closed;
-  }
-  else
-  {
-    if (temp > highRange)
-      return Closed;
-    if (temp < lowRange)
-      return Open;
-  }
-  return barrelPosition;
+    ZoneBarrelPosition newPosition = barrelPosition;
+
+    if (temp < lowRange || temp > highRange)
+    {
+        if ((coolingMode == Cooling && temp > highRange) || (coolingMode == Heating && temp < lowRange))
+        {
+            newPosition = Open;
+        }
+        else
+        {
+            newPosition = Closed;
+        }
+    }
+
+    return newPosition;
 }
 
-// Generic function to check if a button is pressed
-int buttonPressed(uint8_t button)
+
+bool buttonPressed(uint8_t button, uint32_t &lastButtonPress)
 {
-  static uint16_t lastStates = 0;
-  uint8_t state = digitalRead(button);
-  if (state != ((lastStates >> button) & 1))
-  {
-    lastStates ^= 1 << button;
-    return state == HIGH;
-  }
-  return false;
+    const uint32_t debounceTime = 200;
+    uint32_t currentTime = millis();
+    bool state = digitalRead(button);
+
+    if (state == LOW && currentTime - lastButtonPress > debounceTime)
+    {
+        lastButtonPress = currentTime;
+        return true;
+    }
+    return false;
 }
 
-void loop()
+   void loop()
 {
-  float h = dht.readHumidity();
-  float t = dht.readTemperature();
+    static uint32_t lastButtonPresses[3] = {0, 0, 0};
+    static CoolingModes coolingMode = Cooling;
+    static ZoneBarrelPosition barrelPosition = Open;
 
-  if (buttonPressed(MODE_BUTTON_PIN))
-  {
-    // Toggle Cooling mode
-    coolingMode == Cooling ? coolingMode = Heating : coolingMode = Cooling;
-    EEPROM.put(coolingModeAddress, coolingMode);
-  };
-  barrelPosition = getBarrelPostition(t);
-  digitalWrite(white, barrelPosition);
+    float h = dht.readHumidity();
+    float t = dht.readTemperature();
 
-  if (buttonPressed(TEMP_UP_BUTTON_PIN))
-  {
-    changeSetTemp(tempInc);
-  };
-  if (buttonPressed(TEMP_DOWN_BUTTON_PIN))
-  {
-    changeSetTemp(-tempInc);
-  };
+    if (buttonPressed(ModeButton, lastButtonPresses[0]))
+    {
+        // Toggle Cooling mode
+        coolingMode = (coolingMode == Cooling) ? Heating : Cooling;
+        EEPROM.put(coolingModeAddress, coolingMode);
+    }
+    barrelPosition = getBarrelPosition(t, coolingMode, barrelPosition);
+    digitalWrite(white, barrelPosition);
 
-  digitalWrite(blue, coolingMode);
+    if (buttonPressed(TempUpButton, lastButtonPresses[1]))
+    {
+        changeSetTemp(tempInc, setTempAddress);
+    }
+    if (buttonPressed(TempDownButton, lastButtonPresses[2]))
+    {
+        changeSetTemp(-tempInc, setTempAddress);
+    }
 
-  // Check if any reads failed and exit early (to try again).
-  if (isnan(h) || isnan(t))
-  {
-    Serial.println(F("Failed to read from DHT sensor!"));
-    return;
-  }
-  printToLcd(t, setTemp);
+    digitalWrite(blue, coolingMode);
+
+    // Check if any reads failed and exit early (to try again).
+    if (isnan(h) || isnan(t))
+    {
+        Serial.println(F("Failed to read from DHT sensor!"));
+        return;
+    }
+    printToLcd(t, setTemp, coolingMode);
 }
